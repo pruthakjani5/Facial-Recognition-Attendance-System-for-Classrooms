@@ -46,19 +46,7 @@ def markAttendance(name):
             csvwriter.writerow(f'{name} {dtString}')
     print(name)
     # print(myDataList)
-# def markAttendance(name):
-    # with open('C:\\Users\\Ansh\\Desktop\\phyproject\\Attendance.csv', 'r+') as f:
-    #     myDataList = f.readlines()
-    #     for line in myDataList:
-    #         entry = line.split(',')
-    #         today = datetime.now().strftime("%d/%m/%Y")
 
-    #         if name in line and entry[1] == today:
-    #             print(entry[1] + entry[2])
-
-    #         elif name not in line and entry[1] == today:
-    #             now = datetime.now().strftime("%d/%m/%Y,%H:%M")
-    #             f.write(f'\n{name},{now}')
 # def markAttendance(name):
 #     with open('Attendance.csv','r+') as f:
 #         myDataList = f.readlines()
