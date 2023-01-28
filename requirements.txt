@@ -12,3 +12,4 @@ requests==2.24.0
 tqdm==4.51.0
 urllib3==1.25.11
 wincertstore==0.2
+gooeypie
