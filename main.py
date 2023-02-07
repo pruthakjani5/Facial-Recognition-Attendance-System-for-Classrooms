@@ -5,7 +5,6 @@ import os
 from datetime import datetime
 import csv
 import gooeypie as gp
-# import openpyxl
 from PIL import ImageGrab
 
 path = 'Training_images'
@@ -31,33 +30,15 @@ def findEncodings(images):
 nameList=[]
 
 def markAttendance(name):
-    #book=openpyxl.load_workbook('C:\\Users\\Ansh\\Desktop\\phyproject\\Attendance.xlsx')
     with open('Attendance.csv', 'a') as f:
-        # myDataList = f.readlines()
-        # nameList = []
-        # for line in myList:
-            # entry = line
-            # nameList.append(entry[0])
-            # if name in nameList:
-            csvwriter = csv.writer(f, delimiter=" ")
+        csvwriter = csv.writer(f, delimiter=" ")
             # csvwriter.writerow(name)
-            now = datetime.now()
-            dtString = now.strftime('%D:%H:%M:%S')
-            csvwriter.writerow(f'{name} {dtString}')
+        now = datetime.now()
+        dtString = now.strftime('%D:%H:%M:%S')
+        csvwriter.writerow(f'{name} {dtString}')
     print(name)
-    # print(myDataList)
 
-# def markAttendance(name):
-#     with open('Attendance.csv','r+') as f:
-#         myDataList = f.readlines()
-#         nameList = []
-#         for line in myDataList:
-#             entry = line.split(',')
-#             nameList.append(entry[0])
-#             if name not in nameList:
-#                 now = datetime.now()
-#                 dtString = now.strftime('%H:%M:%S')
-#                 f.writelines(f'n{name},{dtString}')
+
 ### FOR CAPTURING SCREEN RATHER THAN WEBCAM
 # def captureScreen(bbox=(300,300,690+300,530+300)):
 #     capScr = np.array(ImageGrab.grab(bbox))
@@ -104,4 +85,6 @@ while True:
             # markAttendance(name)
     cv2.imshow('Webcam', img)
     cv2.waitKey(1)
-    # print(name)
+    
+    
+    
