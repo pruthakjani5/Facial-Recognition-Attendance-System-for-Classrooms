@@ -14,6 +14,10 @@ import tempfile
 import zipfile
 import time
 
+# For webcam on Streamlit Cloud
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
+import av # Part of streamlit-webrtc dependencies
+
 # Set page configuration
 st.set_page_config(
     page_title="FRASC: Face Recognition Attendance System for Classes",
@@ -203,14 +207,30 @@ st.markdown("""
 if not os.path.exists('Training_images'):
     os.makedirs('Training_images')
 
-# Create directory for temp storage
+# Create directory for temp storage (not strictly necessary but keeping for consistency)
 if not os.path.exists('temp'):
     os.makedirs('temp')
 
-# Function to find face encodings
-def find_encodings(images_list):
+# Caching for performance: Load and encode known faces once
+@st.cache_resource
+def load_and_encode_faces():
+    images = []
+    class_names = []
+    
+    if not os.path.exists('Training_images') or not os.listdir('Training_images'):
+        return [], []
+
+    student_images = [f for f in os.listdir('Training_images') if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    
+    for img_file in student_images:
+        img_path = os.path.join('Training_images', img_file)
+        cur_img = cv2.imread(img_path)
+        if cur_img is not None:
+            images.append(cur_img)
+            class_names.append(os.path.splitext(img_file)[0])
+    
     encode_list = []
-    for img in images_list:
+    for img in images:
         try:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             face_encodings = face_recognition.face_encodings(img)
@@ -219,52 +239,55 @@ def find_encodings(images_list):
                 encode_list.append(encode)
         except Exception as e:
             st.error(f"Error encoding image: {e}")
-    return encode_list
+            # Optionally, remove the problematic image's name to avoid errors later
+            # You might want to log this more robustly or provide more user feedback
+    
+    return encode_list, class_names
 
 # Function to mark attendance
-def mark_attendance(name, faculty_name, lecture_name, name_list):
-    name_list.append(name)
+def mark_attendance(name, faculty_name, lecture_name):
     filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
     header = ["Date", "Time", "Faculty", "Lecture", "Name", "Attendance"]
-    found = False
     
-    # Get current date and time
     now = datetime.now()
     today = now.strftime("%d-%m-%Y")
     current_time = now.strftime("%H:%M:%S")
     
-    # Check if file exists
+    # Check if student already took attendance for this lecture today
+    found = False
     if os.path.exists(filename):
-        # Check if student already took attendance
-        with open(filename, 'r') as f:
-            reader = csv.DictReader(f, fieldnames=header)
-            for row in reader:
-                if row.get('Name') == name and row.get('Date') == today and row.get('Lecture') == lecture_name:
+        try:
+            df = pd.read_csv(filename)
+            if not df.empty:
+                # Check if this student has an entry for today's lecture
+                if ((df['Name'] == name) & (df['Date'] == today) & (df['Lecture'] == lecture_name)).any():
                     found = True
-                    break
-    
+        except pd.errors.EmptyDataError:
+            pass # File exists but is empty, so no attendance yet
+        except Exception as e:
+            st.error(f"Error reading attendance file for duplicate check: {e}")
+
     if found:
-        st.markdown(f'<div class="status-warning">Student with name \'{name}\' has already been marked for {lecture_name} today</div>', unsafe_allow_html=True)
+        st.session_state.attendance_messages.append(f'<div class="status-warning">Student \'{name}\' already marked for {lecture_name} today.</div>')
+        return False
     else:
         # Open file in append mode
-        file_exists = os.path.isfile(filename)
+        file_exists = os.path.isfile(filename) and os.stat(filename).st_size > 0 # Check if file exists AND is not empty
         with open(filename, 'a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=header)
-            if not file_exists or os.stat(filename).st_size == 0:
+            if not file_exists: # Write header only if file is new or empty
                 writer.writeheader()
-            for name in set(name_list):  # Use set to avoid duplicates
-                writer.writerow({
-                    "Date": today, 
-                    "Time": current_time, 
-                    "Faculty": faculty_name,
-                    "Lecture": lecture_name,
-                    "Name": name, 
-                    "Attendance": 1
-                })
-        
-        st.markdown(f'<div class="status-success">Attendance marked for {name}</div>', unsafe_allow_html=True)
-    
-    return set(name_list)  # Return unique names
+            
+            writer.writerow({
+                "Date": today, 
+                "Time": current_time, 
+                "Faculty": faculty_name,
+                "Lecture": lecture_name,
+                "Name": name, 
+                "Attendance": 1
+            })
+        st.session_state.attendance_messages.append(f'<div class="status-success">Attendance marked for {name}.</div>')
+        return True # Return True if new attendance was marked
 
 # Function to process an attendance image
 def process_attendance_image(image_file, known_encodings, class_names, faculty_name, lecture_name):
@@ -272,34 +295,93 @@ def process_attendance_image(image_file, known_encodings, class_names, faculty_n
     file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     
-    # Process the image
-    name_list = []
+    marked_names_in_current_image = [] # To store names newly marked in this image
+    
     imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
     imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
     faces_cur_frame = face_recognition.face_locations(imgS)
     encodes_cur_frame = face_recognition.face_encodings(imgS, faces_cur_frame)
     
-    # Draw rectangles and names on the image
     for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
         matches = face_recognition.compare_faces(known_encodings, encode_face)
         face_dis = face_recognition.face_distance(known_encodings, encode_face)
         
-        if len(face_dis) > 0:  # Check if any faces were detected
+        name = "Unknown"
+        if len(face_dis) > 0:
             match_index = np.argmin(face_dis)
             if matches[match_index]:
                 name = class_names[match_index]
-                y1, x2, y2, x1 = face_loc
-                y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.rectangle(img, (x1, y2 - 35), (x2, y2), (0, 255, 0), cv2.FILLED)
-                cv2.putText(img, name, (x1 + 6, y2 - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+        
+        y1, x2, y2, x1 = face_loc
+        y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
+        
+        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255) # Green for known, Red for unknown
+        
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        cv2.rectangle(img, (x1, y2 - 35), (x2, y2), color, cv2.FILLED)
+        cv2.putText(img, name, (x1 + 6, y2 - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+        
+        if name != "Unknown":
+            if mark_attendance(name, faculty_name, lecture_name):
+                marked_names_in_current_image.append(name)
                 
-                # Mark attendance
-                name_list = list(mark_attendance(name, faculty_name, lecture_name, name_list))
-    
-    # Convert processed image for display
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return img_rgb, name_list
+    return img_rgb, marked_names_in_current_image
+
+# Video Transformer for live webcam attendance
+class FaceRecognitionTransformer(VideoTransformerBase):
+    def __init__(self, known_encodings, class_names, faculty_name, lecture_name):
+        self.known_encodings = known_encodings
+        self.class_names = class_names
+        self.faculty_name = faculty_name
+        self.lecture_name = lecture_name
+        self.marked_names_session = set() # To track marked names within the current webcam session
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+        
+        # Process the frame
+        small_frame = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+        small_frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        
+        face_locations = face_recognition.face_locations(small_frame_rgb)
+        face_encodings = face_recognition.face_encodings(small_frame_rgb, face_locations)
+        
+        current_frame_marked = []
+        
+        for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+            top *= 4
+            right *= 4
+            bottom *= 4
+            left *= 4
+            
+            matches = face_recognition.compare_faces(self.known_encodings, face_encoding)
+            name = "Unknown"
+            
+            if True in matches:
+                face_distances = face_recognition.face_distance(self.known_encodings, face_encoding)
+                best_match_index = np.argmin(face_distances)
+                if matches[best_match_index]:
+                    name = self.class_names[best_match_index]
+            
+            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255) # Green for known, Red for unknown
+            
+            cv2.rectangle(img, (left, top), (right, bottom), color, 2)
+            cv2.rectangle(img, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
+            cv2.putText(img, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
+            
+            if name != "Unknown" and name not in self.marked_names_session:
+                if mark_attendance(name, self.faculty_name, self.lecture_name):
+                    self.marked_names_session.add(name)
+                    current_frame_marked.append(name) # Track for display on the frame
+        
+        # Update the session state for displaying marked names in the UI
+        # This will only append unique new names from this frame
+        if current_frame_marked:
+            st.session_state.live_marked_names.update(current_frame_marked)
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
 
 # Function to get a download link for the attendance file
 def get_csv_download_link(faculty_name, lecture_name):
@@ -314,47 +396,6 @@ def get_csv_download_link(faculty_name, lecture_name):
     else:
         return None
         
-# Function to process webcam frame for attendance
-def process_webcam_frame(frame, known_encodings, class_names, faculty_name, lecture_name):
-    name_list = []
-    
-    # Resize frame for faster processing
-    small_frame = cv2.resize(frame, (0, 0), None, 0.25, 0.25)
-    small_frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-    
-    # Find faces in current frame
-    face_locations = face_recognition.face_locations(small_frame_rgb)
-    face_encodings = face_recognition.face_encodings(small_frame_rgb, face_locations)
-    
-    # Process each face found
-    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-        # Scale back up locations
-        top *= 4
-        right *= 4
-        bottom *= 4
-        left *= 4
-        
-        # See if face matches any known face
-        matches = face_recognition.compare_faces(known_encodings, face_encoding)
-        name = "Unknown"
-        
-        if True in matches:
-            face_distances = face_recognition.face_distance(known_encodings, face_encoding)
-            best_match_index = np.argmin(face_distances)
-            if matches[best_match_index]:
-                name = class_names[best_match_index]
-                
-                # Mark attendance for recognized face
-                if name != "Unknown":
-                    name_list = list(mark_attendance(name, faculty_name, lecture_name, name_list))
-        
-        # Draw rectangle and name on face
-        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
-        cv2.putText(frame, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
-    
-    return frame, name_list
-
 # Main Streamlit app
 def main():
     # Display header with logo and title
@@ -378,7 +419,11 @@ def main():
         st.session_state['faculty_name'] = ""
     if 'lecture_name' not in st.session_state:
         st.session_state['lecture_name'] = ""
-        
+    if 'attendance_messages' not in st.session_state:
+        st.session_state['attendance_messages'] = []
+    if 'live_marked_names' not in st.session_state:
+        st.session_state['live_marked_names'] = set() # Use a set for unique names in live session
+
     with tab1:
         st.markdown('<div class="section-header"><h2 style="color: var(--text-color, #2c3e50);">System Setup</h2></div>', unsafe_allow_html=True)
         
@@ -387,22 +432,24 @@ def main():
         
         col1, col2 = st.columns(2)
         with col1:
-            faculty_name = st.text_input("Faculty Name", value=st.session_state['faculty_name'])
+            faculty_name = st.text_input("Faculty Name", value=st.session_state['faculty_name'], key="faculty_input")
             if faculty_name:
                 st.session_state['faculty_name'] = faculty_name
         
         with col2:
-            lecture_name = st.text_input("Lecture/Course Name", value=st.session_state['lecture_name'])
+            lecture_name = st.text_input("Lecture/Course Name", value=st.session_state['lecture_name'], key="lecture_input")
             if lecture_name:
                 st.session_state['lecture_name'] = lecture_name
         
-        if faculty_name and lecture_name:
+        if st.session_state['faculty_name'] and st.session_state['lecture_name']:
             # Create attendance file if it doesn't exist
-            with open(f'Attendance_{faculty_name}_{lecture_name}.csv', 'a+', newline='') as f:
-                csvwriter = csv.writer(f)
-                if os.stat(f'Attendance_{faculty_name}_{lecture_name}.csv').st_size == 0:
+            # This logic should be robust enough to not write header multiple times
+            filename = f"Attendance_{st.session_state['faculty_name']}_{st.session_state['lecture_name']}.csv"
+            if not os.path.exists(filename) or os.stat(filename).st_size == 0:
+                with open(filename, 'w', newline='') as f:
+                    csvwriter = csv.writer(f)
                     csvwriter.writerow(["Date", "Time", "Faculty", "Lecture", "Name", "Attendance"])
-            st.markdown(f'<div class="status-success">Faculty: {faculty_name} | Lecture: {lecture_name}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="status-success">Faculty: {st.session_state["faculty_name"]} | Lecture: {st.session_state["lecture_name"]}</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="status-warning">Please enter both Faculty Name and Lecture/Course Name</div>', unsafe_allow_html=True)
         
@@ -412,73 +459,70 @@ def main():
         st.subheader("Upload Student Images")
         uploaded_files = st.file_uploader("Upload individual student images", 
                                           type=["jpg", "jpeg", "png"], 
-                                          accept_multiple_files=True)
+                                          accept_multiple_files=True,
+                                          key="individual_uploader")
         
         if uploaded_files:
             for uploaded_file in uploaded_files:
                 file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
                 img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                 
-                # Save to training images folder
-                if not os.path.exists('Training_images'):
-                    os.makedirs('Training_images')
-                    
                 filename = uploaded_file.name
                 cv2.imwrite(os.path.join('Training_images', filename), img)
             
             st.markdown(f'<div class="status-success">Uploaded {len(uploaded_files)} images successfully!</div>', unsafe_allow_html=True)
+            # Clear cache for the function that loads and encodes faces
+            load_and_encode_faces.clear()
         
         # Option 2: Upload ZIP file containing images
-        uploaded_zip = st.file_uploader("Or upload a ZIP file containing student images", type=["zip"])
+        uploaded_zip = st.file_uploader("Or upload a ZIP file containing student images", type=["zip"], key="zip_uploader")
         if uploaded_zip:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                # Save the zip file to the temporary directory
                 zip_path = os.path.join(tmp_dir, uploaded_zip.name)
                 with open(zip_path, 'wb') as f:
                     f.write(uploaded_zip.read())
                 
-                # Extract the zip file
                 count = 0
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     for file in zip_ref.namelist():
                         if file.lower().endswith(('.jpg', '.jpeg', '.png')) and not file.startswith('__MACOSX'):
                             zip_ref.extract(file, tmp_dir)
-                            # Copy to training images folder
                             img_path = os.path.join(tmp_dir, file)
                             if os.path.isfile(img_path):
-                                if not os.path.exists('Training_images'):
-                                    os.makedirs('Training_images')
                                 filename = os.path.basename(file)
                                 shutil.copy(img_path, os.path.join('Training_images', filename))
                                 count += 1
                 
                 st.markdown(f'<div class="status-success">Extracted {count} images from ZIP file successfully!</div>', unsafe_allow_html=True)
-        
+                # Clear cache for the function that loads and encodes faces
+                load_and_encode_faces.clear()
+
         # Show all currently loaded student images
+        st.subheader("Current Student Database")
         if os.path.exists('Training_images'):
-            student_images = [f for f in os.listdir('Training_images') if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            student_images_list = [f for f in os.listdir('Training_images') if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             
-            if student_images:
-                st.subheader("Current Student Database")
-                
-                # Display the images in a grid
+            if student_images_list:
                 cols = 4
-                rows = (len(student_images) + cols - 1) // cols
+                rows = (len(student_images_list) + cols - 1) // cols
                 
                 for i in range(rows):
                     row_cols = st.columns(cols)
                     for j in range(cols):
                         idx = i * cols + j
-                        if idx < len(student_images):
-                            img_path = os.path.join('Training_images', student_images[idx])
+                        if idx < len(student_images_list):
+                            img_path = os.path.join('Training_images', student_images_list[idx])
                             img = Image.open(img_path)
-                            name = os.path.splitext(student_images[idx])[0]
+                            name = os.path.splitext(student_images_list[idx])[0]
                             row_cols[j].image(img, caption=name, width=150)
-    
+            else:
+                st.info("No student images uploaded yet.")
+        else:
+            st.info("No 'Training_images' directory found. Please upload images.")
+
     with tab2:
         st.markdown('<div class="section-header"><h2 style="color: var(--text-color, #2c3e50);">Attendance Management</h2></div>', unsafe_allow_html=True)
         
-        # Check if faculty and lecture are set
         if not st.session_state['faculty_name'] or not st.session_state['lecture_name']:
             st.markdown('<div class="status-warning">Please enter Faculty Name and Lecture Name in the Setup tab first.</div>', unsafe_allow_html=True)
             return
@@ -487,134 +531,99 @@ def main():
         lecture_name = st.session_state['lecture_name']
         st.markdown(f'<div class="status-info">Faculty: {faculty_name} | Lecture: {lecture_name}</div>', unsafe_allow_html=True)
         
-        # Load and encode known faces
-        if os.path.exists('Training_images'):
-            student_images = [f for f in os.listdir('Training_images') if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        # Load and encode known faces using the cached function
+        known_encodings, class_names = load_and_encode_faces()
+        
+        if not known_encodings:
+            st.markdown('<div class="status-warning">No student encodings available. Please upload images in the Setup tab and ensure faces are detectable.</div>', unsafe_allow_html=True)
+            return
             
-            if not student_images:
-                st.markdown('<div class="status-warning">No student images available. Please upload images in the Setup tab.</div>', unsafe_allow_html=True)
-                return
+        st.markdown(f'<div class="status-success">Loaded and encoded {len(known_encodings)} faces for {len(class_names)} students.</div>', unsafe_allow_html=True)
+        
+        # Choose attendance method
+        st.subheader("Choose Attendance Method")
+        attendance_method = st.radio(
+            "Select method for taking attendance:",
+            ["Upload Image", "Use Webcam"],
+            horizontal=True,
+            key="attendance_method_radio"
+        )
+        
+        # Clear previous attendance messages when method changes
+        if st.session_state.get('last_attendance_method') != attendance_method:
+            st.session_state.attendance_messages = []
+            st.session_state.live_marked_names = set() # Reset for live webcam
+        st.session_state['last_attendance_method'] = attendance_method
+
+        attendance_messages_placeholder = st.empty()
+        
+        if attendance_method == "Upload Image":
+            st.subheader("Upload Image for Attendance")
+            attendance_image = st.file_uploader("Upload an image containing students", type=["jpg", "jpeg", "png"], key="attendance_image_uploader")
             
-            # Load known faces
-            images = []
-            class_names = []
+            if attendance_image:
+                st.session_state.attendance_messages = [] # Clear messages for new image upload
+                with st.spinner("Processing image and marking attendance..."):
+                    processed_img, newly_marked_in_image = process_attendance_image(attendance_image, known_encodings, class_names, faculty_name, lecture_name)
+                
+                st.subheader("Processed Image")
+                st.image(processed_img, channels="RGB", caption="Processed attendance image")
+                
+                if not newly_marked_in_image and not st.session_state.attendance_messages: # If no new faces marked and no previous messages
+                    st.markdown('<div class="status-warning">No new known faces detected in the image, or all detected were already marked.</div>', unsafe_allow_html=True)
+                
+                # Display all messages from this image processing
+                for msg in st.session_state.attendance_messages:
+                    attendance_messages_placeholder.markdown(msg, unsafe_allow_html=True)
+
+        elif attendance_method == "Use Webcam":
+            st.subheader("Webcam Attendance")
             
-            with st.spinner("Loading student database..."):
-                for img_file in student_images:
-                    img_path = os.path.join('Training_images', img_file)
-                    cur_img = cv2.imread(img_path)
-                    if cur_img is not None:
-                        images.append(cur_img)
-                        class_names.append(os.path.splitext(img_file)[0])
-            
-            st.markdown(f'<div class="status-success">Loaded {len(class_names)} students: {", ".join(class_names)}</div>', unsafe_allow_html=True)
-            
-            # Encode faces
-            with st.spinner("Encoding faces (this may take a moment)..."):
-                known_encodings = find_encodings(images)
-            
-            st.markdown(f'<div class="status-success">Encoding complete. {len(known_encodings)} faces encoded.</div>', unsafe_allow_html=True)
-            
-            # Choose attendance method
-            st.subheader("Choose Attendance Method")
-            attendance_method = st.radio(
-                "Select method for taking attendance:",
-                ["Upload Image", "Use Webcam"],
-                horizontal=True
+            # The webrtc_streamer component handles start/stop and stream
+            webrtc_ctx = webrtc_streamer(
+                key="webcam-attendance",
+                mode=WebRtcMode.SENDRECV,
+                rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+                video_transformer_factory=lambda: FaceRecognitionTransformer(
+                    known_encodings=known_encodings,
+                    class_names=class_names,
+                    faculty_name=faculty_name,
+                    lecture_name=lecture_name
+                ),
+                media_stream_constraints={"video": True, "audio": False},
+                async_transform=True, # Process frames asynchronously
             )
             
-            marked_names = []
-            
-            if attendance_method == "Upload Image":
-                # Upload image for attendance
-                st.subheader("Upload Image for Attendance")
-                attendance_image = st.file_uploader("Upload an image containing students", type=["jpg", "jpeg", "png"])
-                
-                if attendance_image:
-                    with st.spinner("Processing image and marking attendance..."):
-                        processed_img, marked_names = process_attendance_image(attendance_image, known_encodings, class_names, faculty_name, lecture_name)
-                    
-                    # Display processed image and marked attendance
-                    st.subheader("Processed Image")
-                    st.image(processed_img, channels="RGB", caption="Processed attendance image")
-                    
-                    if marked_names:
-                        st.subheader("Attendance Marked")
-                        st.markdown(f'<div class="status-success">Attendance marked for: {", ".join(marked_names)}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="status-warning">No known faces detected in the image.</div>', unsafe_allow_html=True)
-            
-            elif attendance_method == "Use Webcam":
-                st.subheader("Webcam Attendance")
-                
-                # Add a start button for webcam
-                start_webcam = st.button("Start Webcam Attendance")
-                stop_webcam = st.button("Stop Webcam")
-                
-                stframe = st.empty()
-                webcam_status = st.empty()
-                attend_status = st.empty()
-                
-                if start_webcam and not stop_webcam:
-                    webcam_status.markdown('<div class="status-info">Webcam is active. Position students in front of the camera.</div>', unsafe_allow_html=True)
-                    
-                    # Initialize webcam
-                    cap = cv2.VideoCapture(0)
-                    
-                    # Set a time limit (30 seconds)
-                    start_time = time.time()
-                    time_limit = 30  # seconds
-                    all_marked_names = []
-                    
-                    # Run webcam for attendance
-                    while time.time() - start_time < time_limit:
-                        success, frame = cap.read()
-                        if not success:
-                            st.error("Failed to access webcam. Please check your camera connection.")
-                            break
-                            
-                        # Process frame for attendance
-                        processed_frame, new_marked_names = process_webcam_frame(frame, known_encodings, class_names, faculty_name, lecture_name)
-                        
-                        # Update list of all marked names
-                        all_marked_names.extend(new_marked_names)
-                        all_marked_names = list(set(all_marked_names))  # Remove duplicates
-                        
-                        # Display processed frame
-                        stframe.image(processed_frame, channels="BGR", caption="Live Webcam")
-                        
-                        # Display attendance status
-                        if all_marked_names:
-                            attend_status.markdown(f'<div class="status-success">Attendance marked for: {", ".join(all_marked_names)}</div>', unsafe_allow_html=True)
-                        
-                        # Check for stop button
-                        if stop_webcam:
-                            break
-                            
-                        # Add a small delay
-                        time.sleep(0.1)
-                    
-                    # Release webcam
-                    cap.release()
-                    webcam_status.markdown('<div class="status-success">Webcam attendance session completed.</div>', unsafe_allow_html=True)
-                    marked_names = all_marked_names
-            
-            # Download attendance CSV
-            st.markdown('<div class="section-header"><h3 style="color: var(--text-color, #2c3e50);">Attendance Records</h3></div>', unsafe_allow_html=True)
-            download_link = get_csv_download_link(faculty_name, lecture_name)
-            if download_link:
-                st.markdown(download_link, unsafe_allow_html=True)
-                
-                # Display attendance data
-                try:
-                    df = pd.read_csv(f"Attendance_{faculty_name}_{lecture_name}.csv")
-                    st.markdown('<div class="attendance-data">', unsafe_allow_html=True)
-                    st.dataframe(df, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Error reading attendance file: {e}")
+            # Display live attendance status
+            if webrtc_ctx.state.playing:
+                st.markdown('<div class="status-info">Webcam is active. Position students in front of the camera.</div>', unsafe_allow_html=True)
+                if st.session_state.live_marked_names:
+                    attendance_messages_placeholder.markdown(f'<div class="status-success">Attendance marked for: {", ".join(st.session_state.live_marked_names)}</div>', unsafe_allow_html=True)
+                else:
+                    attendance_messages_placeholder.markdown('<div class="status-info">Awaiting faces for attendance...</div>', unsafe_allow_html=True)
             else:
-                st.markdown('<div class="status-warning">No attendance data available yet.</div>', unsafe_allow_html=True)
+                st.session_state.live_marked_names = set() # Reset when webcam is off
+                attendance_messages_placeholder.markdown('<div class="status-info">Webcam not active. Click "Start" below the video stream.</div>', unsafe_allow_html=True)
+        
+        # Download attendance CSV
+        st.markdown('<div class="section-header"><h3 style="color: var(--text-color, #2c3e50);">Attendance Records</h3></div>', unsafe_allow_html=True)
+        download_link = get_csv_download_link(faculty_name, lecture_name)
+        if download_link:
+            st.markdown(download_link, unsafe_allow_html=True)
+            
+            # Display attendance data
+            try:
+                df = pd.read_csv(f"Attendance_{faculty_name}_{lecture_name}.csv")
+                st.markdown('<div class="attendance-data">', unsafe_allow_html=True)
+                st.dataframe(df, use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+            except pd.errors.EmptyDataError:
+                st.markdown('<div class="status-warning">No attendance data available yet for this lecture.</div>', unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error reading attendance file: {e}")
+        else:
+            st.markdown('<div class="status-warning">No attendance data file created yet.</div>', unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
     main()
