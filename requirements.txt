@@ -1,6 +1,5 @@
 dlib-bin
-face-recognition
-opencv-python
+face_recognition@git+https://github.com/thetoby9944/face_recognitionopencv-python
 Pillow
 pandas
 numpy
