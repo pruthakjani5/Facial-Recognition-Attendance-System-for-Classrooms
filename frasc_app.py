@@ -876,7 +876,7 @@
 import streamlit as st
 import cv2  # COMMENT OUT
 import numpy as np # COMMENT OUT
-# import face_recognition # COMMENT OUT
+import face_recognition # COMMENT OUT
 import os
 from datetime import datetime # COMMENT OUT
 import csv # COMMENT OUT
