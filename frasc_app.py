@@ -874,32 +874,28 @@
 # if __name__ == "__main__":
 #     main()
 import streamlit as st
-import cv2
-import numpy as np
-import face_recognition
+# import cv2  # COMMENT OUT
+# import numpy as np # COMMENT OUT
+# import face_recognition # COMMENT OUT
 import os
-from datetime import datetime
-import csv
-import pandas as pd
-from PIL import Image
-import shutil
-import io
-import base64
-import tempfile
-import zipfile
-import time
+# from datetime import datetime # COMMENT OUT
+# import csv # COMMENT OUT
+# import pandas as pd # COMMENT OUT
+# from PIL import Image # COMMENT OUT
+# import shutil # COMMENT OUT
+# import io # COMMENT OUT
+# import base64 # COMMENT OUT
+# import tempfile # COMMENT OUT
+# import zipfile # COMMENT OUT
+# import time # COMMENT OUT
 
-# For webcam on Streamlit Cloud
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-import av
+# # For webcam on Streamlit Cloud
+# from streamlit_webrtc import webrtc_streamer, VideoTransformerBase # COMMENT OUT
+# import av # COMMENT OUT
 
-# st.set_page_config( # COMMENT OUT THIS LINE
-#     page_title="FRASC: Face Recognition Attendance System for Classes",
-#     layout="wide",
-#     initial_sidebar_state="expanded"
-# )
 
-# st.markdown("""...""", unsafe_allow_html=True) # COMMENT OUT THIS ENTIRE CSS BLOCK
+# st.set_page_config(...) # Keep commented out
+# st.markdown(...) # Keep commented out
 
 # Create directory for training images if it doesn't exist
 if not os.path.exists('Training_images'):
@@ -908,7 +904,7 @@ if not os.path.exists('Training_images'):
 if not os.path.exists('temp'):
     os.makedirs('temp')
 
-# COMMENT OUT ALL FUNCTION DEFINITIONS BELOW THIS LINE
+# ALL FUNCTION DEFINITIONS BELOW THIS LINE REMAIN COMMENTED OUT
 # def load_and_encode_faces():
 #     ...
 # def mark_attendance(...):
@@ -923,8 +919,8 @@ if not os.path.exists('temp'):
 
 # Main Streamlit app - TEMPORARY DEBUGGING VERSION
 def main():
-    st.write("Debug App is running!") # Simple Streamlit call
-    print("Debug: main function started.") # Print to logs
+    st.write("Debug App is running! (Minimal Imports)")
+    print("Debug: main function started with minimal imports.")
 
 if __name__ == "__main__":
     main()
