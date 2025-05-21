@@ -1,0 +1,6 @@
+face-recognition
+opencv-python
+Pillow
+pandas
+numpy
+imutils
