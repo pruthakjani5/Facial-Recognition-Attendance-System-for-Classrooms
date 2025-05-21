@@ -1,4 +1,4 @@
-dlib-bin
+dlib
 face_recognition @ git+https://github.com/thetoby9944/face_recognition
 opencv-python
 Pillow
