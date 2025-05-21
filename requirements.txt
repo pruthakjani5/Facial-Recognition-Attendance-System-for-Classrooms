@@ -1,4 +1,5 @@
-face-recognition==1.3.0
+face-recognition
+face-recognition-models==0.3.0
 opencv-python
 Pillow
 pandas
