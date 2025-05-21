@@ -1,5 +1,5 @@
-face-recognition==1.3.0
 dlib-bin
+face-recognition
 opencv-python
 Pillow
 pandas
