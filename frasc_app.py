@@ -882,12 +882,12 @@ from datetime import datetime # COMMENT OUT
 import csv # COMMENT OUT
 import pandas as pd # COMMENT OUT
 from PIL import Image # COMMENT OUT
-# import shutil # COMMENT OUT
-# import io # COMMENT OUT
-# import base64 # COMMENT OUT
-# import tempfile # COMMENT OUT
-# import zipfile # COMMENT OUT
-# import time # COMMENT OUT
+import shutil # COMMENT OUT
+import io # COMMENT OUT
+import base64 # COMMENT OUT
+import tempfile # COMMENT OUT
+import zipfile # COMMENT OUT
+import time # COMMENT OUT
 
 # # For webcam on Streamlit Cloud
 # from streamlit_webrtc import webrtc_streamer, VideoTransformerBase # COMMENT OUT
