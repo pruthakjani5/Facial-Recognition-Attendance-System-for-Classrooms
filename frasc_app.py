@@ -874,16 +874,337 @@
 # if __name__ == "__main__":
 #     main()
 import streamlit as st
-import time # Added for testing
+import cv2
+import numpy as np
+import face_recognition
+import os
+from datetime import datetime
+import csv
+import pandas as pd
+from PIL import Image
+import shutil
+import io
+import base64
+import tempfile
+import zipfile
+import time # Make sure time is imported for potential sleeps
 
-st.set_page_config(layout="wide")
+# For webcam on Streamlit Cloud
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import av # Part of streamlit-webrtc dependencies
 
-st.title("Hello Streamlit!")
-st.write("If you see this, Streamlit is working.")
+# Set page configuration
+st.set_page_config(
+    page_title="FRASC: Face Recognition Attendance System for Classes",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Add a short sleep to ensure the browser has time to connect
-time.sleep(2)
-st.write("Backend is still alive after 2 seconds.")
+# Custom CSS... (keep as is)
+# This might be important if there's a CSS error blocking rendering
+st.markdown("""
+<style>
+/* Add your custom CSS here if it's not too long */
+/* If this CSS is causing issues, temporarily remove it */
+.stApp {
+    background-color: #f0f2f6;
+}
+.main-header {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    margin-bottom: 30px;
+    text-align: center;
+    color: #3498db;
+    font-size: 2.2em;
+    font-weight: bold;
+}
+.sidebar .sidebar-content {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+.stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+    font-size:1.5rem;
+}
+.status-success {
+    background-color: #e6ffe6; /* Light green */
+    color: #008000; /* Dark green */
+    border: 1px solid #008000;
+    padding: 8px;
+    border-radius: 5px;
+    margin-bottom: 5px;
+}
+.status-warning {
+    background-color: #fffacd; /* Lemon Chiffon */
+    color: #ffa500; /* Orange */
+    border: 1px solid #ffa500;
+    padding: 8px;
+    border-radius: 5px;
+    margin-bottom: 5px;
+}
+.status-error {
+    background-color: #ffe6e6; /* Light red */
+    color: #cc0000; /* Dark red */
+    border: 1px solid #cc0000;
+    padding: 8px;
+    border-radius: 5px;
+    margin-bottom: 5px;
+}
+.stButton > button {
+    background-color: #3498db;
+    color: white;
+    border-radius: 5px;
+    padding: 10px 20px;
+    font-size: 1.1em;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+.stButton > button:hover {
+    background-color: #2980b9;
+}
+.download-button {
+    display: inline-block;
+    background-color: #2ecc71; /* Green */
+    color: white;
+    padding: 10px 20px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 1.1em;
+    margin-top: 15px;
+    transition: background-color 0.3s ease;
+}
+.download-button:hover {
+    background-color: #27ae60;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# If you want to check logs, add a print statement
-print("Minimal app ran successfully!")
+
+# Create directory for training images if it doesn't exist
+if not os.path.exists('Training_images'):
+    os.makedirs('Training_images')
+
+if not os.path.exists('temp'):
+    os.makedirs('temp')
+
+# Temporarily comment out the @st.cache_resource decorator for initial debugging
+# @st.cache_resource
+def load_and_encode_faces():
+    images = []
+    class_names = []
+
+    # Check if directory exists and is not empty before processing
+    if not os.path.exists('Training_images') or not os.listdir('Training_images'):
+        print("No training images found. Returning empty lists.")
+        return [], [] # Return empty lists if no images are found
+
+    student_images = [f for f in os.listdir('Training_images') if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+
+    if not student_images:
+        print("No valid image files found in Training_images. Returning empty lists.")
+        return [], []
+
+    for img_file in student_images:
+        img_path = os.path.join('Training_images', img_file)
+        cur_img = cv2.imread(img_path)
+        if cur_img is not None:
+            images.append(cur_img)
+            class_names.append(os.path.splitext(img_file)[0])
+        else:
+            print(f"Warning: Could not read image file: {img_path}")
+
+    encode_list = []
+    for i, img in enumerate(images):
+        try:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            face_encodings = face_recognition.face_encodings(img)
+            if face_encodings:
+                encode_list.append(face_encodings[0]) # Assuming one face per training image
+            else:
+                print(f"Warning: No faces found in image: {class_names[i]}")
+        except Exception as e:
+            print(f"Error encoding image '{class_names[i]}': {e}")
+
+    print(f"Loaded {len(images)} images, encoded {len(encode_list)} faces.")
+    return encode_list, class_names
+
+# mark_attendance function (keep as is)
+def mark_attendance(name, faculty_name, lecture_name):
+    filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
+    header = ["Date", "Time", "Faculty", "Lecture", "Name", "Attendance"]
+
+    now = datetime.now()
+    today = now.strftime("%d-%m-%Y")
+    current_time = now.strftime("%H:%M:%S")
+
+    found = False
+    if os.path.exists(filename):
+        try:
+            df = pd.read_csv(filename)
+            if not df.empty:
+                if ((df['Name'] == name) & (df['Date'] == today) & (df['Lecture'] == lecture_name)).any():
+                    found = True
+        except pd.errors.EmptyDataError:
+            pass
+        except Exception as e:
+            print(f"Error reading attendance file for duplicate check: {e}")
+
+    if found:
+        print(f"Student '{name}' already marked for {lecture_name} today.")
+        return False
+    else:
+        file_exists = os.path.isfile(filename) and os.stat(filename).st_size > 0
+        with open(filename, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=header)
+            if not file_exists:
+                writer.writeheader()
+
+            writer.writerow({
+                "Date": today, 
+                "Time": current_time, 
+                "Faculty": faculty_name,
+                "Lecture": lecture_name,
+                "Name": name, 
+                "Attendance": 1
+            })
+        print(f"Attendance marked for {name}.")
+        return True
+
+# process_attendance_image function (keep as is)
+def process_attendance_image(image_file, known_encodings, class_names, faculty_name, lecture_name):
+    file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+    marked_names_in_current_image = []
+
+    imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+    imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+    faces_cur_frame = face_recognition.face_locations(imgS)
+    encodes_cur_frame = face_recognition.face_encodings(imgS, faces_cur_frame)
+
+    for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
+        matches = face_recognition.compare_faces(known_encodings, encode_face)
+        face_dis = face_recognition.face_distance(known_encodings, encode_face)
+
+        name = "Unknown"
+        if len(face_dis) > 0:
+            match_index = np.argmin(face_dis)
+            if matches[match_index]:
+                name = class_names[match_index]
+
+        y1, x2, y2, x1 = face_loc
+        y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
+
+        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        cv2.rectangle(img, (x1, y2 - 35), (x2, y2), color, cv2.FILLED)
+        cv2.putText(img, name, (x1 + 6, y2 - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+
+        if name != "Unknown":
+            if mark_attendance(name, faculty_name, lecture_name):
+                marked_names_in_current_image.append(name)
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img_rgb, marked_names_in_current_image
+
+# Video Transformer for live webcam attendance (keep as is, but consider potential issues here too)
+class FaceRecognitionTransformer(VideoTransformerBase):
+    def __init__(self, known_encodings, class_names, faculty_name, lecture_name):
+        self.known_encodings = known_encodings
+        self.class_names = class_names
+        self.faculty_name = faculty_name
+        self.lecture_name = lecture_name
+        self.marked_names_session = set()
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+
+        small_frame = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+        small_frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+        face_locations = face_recognition.face_locations(small_frame_rgb)
+        face_encodings = face_recognition.face_encodings(small_frame_rgb, face_locations)
+
+        current_frame_marked = []
+
+        for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+            top *= 4
+            right *= 4
+            bottom *= 4
+            left *= 4
+
+            matches = face_recognition.compare_faces(self.known_encodings, face_encoding)
+            name = "Unknown"
+
+            if True in matches:
+                face_distances = face_recognition.face_distance(self.known_encodings, face_encoding)
+                best_match_index = np.argmin(face_distances)
+                if matches[best_match_index]:
+                    name = self.class_names[best_match_index]
+
+            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+
+            cv2.rectangle(img, (left, top), (right, bottom), color, 2)
+            cv2.rectangle(img, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
+            cv2.putText(img, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
+
+            if name != "Unknown" and name not in self.marked_names_session:
+                if mark_attendance(name, self.faculty_name, self.lecture_name):
+                    self.marked_names_session.add(name)
+                    current_frame_marked.append(name)
+
+        if current_frame_marked:
+            if 'live_marked_names' in st.session_state:
+                st.session_state.live_marked_names.update(current_frame_marked)
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+# get_csv_download_link (keep as is)
+def get_csv_download_link(faculty_name, lecture_name):
+    filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
+            csv_data = f.read()
+
+        b64 = base64.b64encode(csv_data.encode()).decode()
+        href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-button">Download Attendance CSV</a>'
+        return href
+    else:
+        return None
+
+# Main Streamlit app - TEMPORARY DEBUGGING VERSION
+def main():
+    st.markdown('''
+    <div class="main-header">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 15px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3498db" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>Face Recognition Attendance System for Classes</span>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+    st.success("App is running! If you see this, the initial setup is OK.")
+    st.write("Now, let's try loading the faces...")
+
+    # Try loading faces
+    try:
+        known_encodings, class_names = load_and_encode_faces()
+        st.success(f"Successfully loaded and encoded {len(known_encodings)} faces for {len(class_names)} students.")
+        st.write("Known students:", ", ".join(class_names))
+    except Exception as e:
+        st.error(f"Error during face loading/encoding: {e}")
+        st.info("Please check the 'Training_images' folder and ensure images are valid.")
+
+    st.warning("This is a simplified version for debugging. Full features are disabled.")
+
+
+if __name__ == "__main__":
+    main()
