@@ -874,14 +874,14 @@
 # if __name__ == "__main__":
 #     main()
 import streamlit as st
-# import cv2  # COMMENT OUT
-# import numpy as np # COMMENT OUT
+import cv2  # COMMENT OUT
+import numpy as np # COMMENT OUT
 # import face_recognition # COMMENT OUT
 import os
-# from datetime import datetime # COMMENT OUT
-# import csv # COMMENT OUT
-# import pandas as pd # COMMENT OUT
-# from PIL import Image # COMMENT OUT
+from datetime import datetime # COMMENT OUT
+import csv # COMMENT OUT
+import pandas as pd # COMMENT OUT
+from PIL import Image # COMMENT OUT
 # import shutil # COMMENT OUT
 # import io # COMMENT OUT
 # import base64 # COMMENT OUT
