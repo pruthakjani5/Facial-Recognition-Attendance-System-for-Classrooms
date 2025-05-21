@@ -17,4 +17,3 @@ imutils
 tk
 gooeypie
 shutil
-streamlit
