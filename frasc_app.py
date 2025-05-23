@@ -1062,11 +1062,12 @@ def main():
                 with st.spinner("Processing image and marking attendance..."):
                     processed_img, newly_marked_in_image = process_attendance_image(attendance_image, known_encodings, class_names, faculty_name, lecture_name)
                     if processed_img is not None:
-                        st.image(processed_img, caption="Processed Image", use_container_width=True)
+                        # Fix: Remove use_container_width parameter
+                        st.image(processed_img, caption="Processed Image")
                         if newly_marked_in_image:
                             st.session_state.live_marked_names.update(newly_marked_in_image)
                         else:
-                            st.markdown('<div class="status-warning">No faces detected in the uploaded image.</div>', unsafe_allow_html=True)
+                            st.markdown('<div class="status-warning">No new faces detected or recognized in the uploaded image.</div>', unsafe_allow_html=True)
                     else:
                         st.markdown('<div class="status-error">Error processing the uploaded image.</div>', unsafe_allow_html=True)
                 # Display attendance messages
@@ -1112,7 +1113,10 @@ def main():
             try:
                 df = pd.read_csv(filename)
                 if not df.empty:
-                    st.dataframe(df, use_container_width=True)
+                    # Fix: Remove use_container_width parameter
+                    st.dataframe(df)
+                    # Or use this older syntax for width adjustment:
+                    # st.dataframe(df, width=800)
                 else:
                     st.markdown('<div class="status-warning">No attendance data available.</div>', unsafe_allow_html=True)
             except Exception as e:
