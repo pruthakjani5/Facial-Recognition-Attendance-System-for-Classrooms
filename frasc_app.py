@@ -304,71 +304,7 @@ def create_directories():
         st.error(f"Error in create_directories: {e}")
         return False
 
-# # Caching for performance: Load and encode known faces once
-# @st.cache_data
-# def load_and_encode_faces():
-#     if not FACE_RECOGNITION_AVAILABLE:
-#         return [], []
-    
-#     images = []
-#     class_names = []
-    
-#     # More robust directory checking
-#     try:
-#         # First verify the directory exists and is actually a directory
-#         if not os.path.exists('Training_images'):
-#             try:
-#                 os.makedirs('Training_images')
-#                 return [], []  # Return empty lists since we just created the directory
-#             except Exception as e:
-#                 st.error(f"Could not create Training_images directory: {e}")
-#                 return [], []
-        
-#         if not os.path.isdir('Training_images'):
-#             st.error("Training_images exists but is not a directory")
-#             return [], []
-            
-#         # Check if the directory is empty
-#         files = os.listdir('Training_images')
-#         if not files:
-#             return [], []
-            
-#         # Filter for image files
-#         student_images = [f for f in files if os.path.isfile(os.path.join('Training_images', f)) 
-#                           and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        
-#         if not student_images:
-#             return [], []
-            
-#         # Process each image
-#         for img_file in student_images:
-#             try:
-#                 img_path = os.path.join('Training_images', img_file)
-#                 if not os.path.exists(img_path):
-#                     continue
-                    
-#                 cur_img = cv2.imread(img_path)
-#                 if cur_img is not None:
-#                     images.append(cur_img)
-#                     class_names.append(os.path.splitext(img_file)[0])
-#             except Exception as e:
-#                 st.warning(f"Could not load image {img_file}: {e}")
-        
-#         # No images were loaded successfully
-#         if not images:
-#             return [], []
-        
-#         # Encode faces
-#         encode_list = []
-#         for i, img in enumerate(images):
-#             try:
-#                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-#                 face_encodings = face_recognition.face_encodings(img_rgb)
-#                 if face_encodings:
-#                     encode = face_encodings[0]
-#                     encode_list.append(encode)
-#                 else:
-#                     st.warning(f"No face detected in image for {class_names[i]}")
+# Load and encode faces from disk or memory
 @st.cache_data(ttl=60)  # Cache for 1 minute, allowing frequent refreshes
 def load_and_encode_faces():
     if not FACE_RECOGNITION_AVAILABLE:
@@ -383,7 +319,7 @@ def load_and_encode_faces():
         if os.path.exists('Training_images') and os.path.isdir('Training_images'):
             files = os.listdir('Training_images')
             student_images = [f for f in files if os.path.isfile(os.path.join('Training_images', f)) 
-                              and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                            and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             
             st.sidebar.info(f"Found {len(student_images)} images in Training_images directory")
             
@@ -447,26 +383,6 @@ def load_and_encode_faces():
         st.error("No faces could be encoded. Please check your images.")
     
     return encode_list, class_names_final
-    encode_list = []
-    valid_indices = []
-    
-    for i, img in enumerate(images):
-        try:
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            face_encodings = face_recognition.face_encodings(img_rgb)
-            if face_encodings:
-                encode = face_encodings[0]
-                encode_list.append(encode)
-                valid_indices.append(i)
-            else:
-                st.warning(f"No face detected in image for {class_names[i]}")
-        except Exception as e:
-            st.error(f"Error encoding image for {class_names[i]}: {e}")
-    
-    # Only keep class names for successfully encoded faces
-    class_names_final = [class_names[i] for i in valid_indices]
-    
-    return encode_list, class_names_final
 
 def mark_attendance(name, faculty_name, lecture_name):
     filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
@@ -476,7 +392,11 @@ def mark_attendance(name, faculty_name, lecture_name):
     cleaned_name = str(name).replace(',', '')
     
     now = datetime.now()
-    today = now.strftime("%d-%m-%Y")
+    # Using IST time (UTC+5:30) for Streamlit Cloud deployment
+    indian_timezone = now.astimezone(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+    today = indian_timezone.strftime("%d-%m-%Y")
+    current_time = indian_timezone.strftime("%H:%M:%S")
+
     current_time = now.strftime("%H:%M:%S")
     
     # Use a lock mechanism to prevent duplicate entries from concurrent calls
@@ -711,7 +631,51 @@ def main():
     # Initialize in-memory image storage if not exists
     if 'in_memory_training_images' not in st.session_state:
         st.session_state.in_memory_training_images = {}
+        
+    # Set storage priority flag for the app
+    if 'storage_priority' not in st.session_state:
+        st.session_state.storage_priority = 'disk'  # Default to disk storage with memory as fallback
+    # Application info section in sidebar
+    st.sidebar.markdown("## About FRASC")
+    st.sidebar.markdown("""
+    **FRASC** (Face Recognition Attendance System for Classes) is an AI-powered 
+    attendance management solution designed for educational institutions.
     
+    This application uses state-of-the-art facial recognition technology to:
+    - Automatically mark student attendance
+    - Generate digital attendance records
+    - Streamline administrative processes
+    """)
+    
+    # How to use section
+    st.sidebar.markdown("## How to Use")
+    st.sidebar.markdown("""
+    1. **Setup Tab:**
+       - Enter faculty and lecture details
+       - Upload student images individually or via ZIP file
+       - Review the student database
+    
+    2. **Take Attendance Tab:**
+       - Choose between image upload or webcam
+       - Process images to mark student attendance
+       - View real-time recognition results
+    
+    3. **Attendance Data:**
+       - Review attendance records
+       - Download CSV files for record-keeping
+    """)
+    
+    # Tips section with collapsible content
+    with st.sidebar.expander("Tips & Best Practices"):
+        st.markdown("""
+        - **Image Quality:** Use clear, well-lit photos for better recognition
+        - **Face Angle:** Front-facing images work best
+        - **Group Photos:** Ensure all faces are visible when using group images
+        - **Webcam Usage:** Ensure proper lighting when using webcam mode
+        - **Database:** Add multiple images per student for improved accuracy
+        """)
+    
+    st.sidebar.markdown("---")
     # Initialize directories
     create_directories()
     
