@@ -708,6 +708,10 @@ def get_csv_download_link(faculty_name, lecture_name):
 
 # Main Streamlit app
 def main():
+    # Initialize in-memory image storage if not exists
+    if 'in_memory_training_images' not in st.session_state:
+        st.session_state.in_memory_training_images = {}
+    
     # Initialize directories
     create_directories()
     
@@ -788,7 +792,58 @@ def main():
         
         st.markdown('<div class="section-header"><h3 style="color: var(--text-color, #2c3e50);">Student Database Management</h3></div>', unsafe_allow_html=True)
         
-        uploaded_zip = st.file_uploader("Or upload a ZIP file containing student images", type=["zip"], key="zip_uploader")
+        # Add individual student image upload
+        st.subheader("Upload Individual Student Image")
+        student_name = st.text_input("Student Name (will be the filename)")
+        uploaded_file = st.file_uploader("Upload student image", type=["jpg", "jpeg", "png"], key="individual_uploader")
+        
+        if uploaded_file and student_name:
+            try:
+                with st.spinner("Processing image..."):
+                    # Read image with PIL first
+                    img = Image.open(uploaded_file)
+                    img_array = np.array(img)
+                    
+                    # Convert to BGR for OpenCV processing if needed
+                    if len(img_array.shape) == 3 and img_array.shape[2] == 3:  # If RGB
+                        img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                    else:
+                        img_cv = img_array
+                    
+                    # Ensure filename has appropriate extension
+                    valid_extensions = ['.jpg', '.jpeg', '.png']
+                    has_valid_ext = False
+                    for ext in valid_extensions:
+                        if student_name.lower().endswith(ext):
+                            has_valid_ext = True
+                            break
+                    
+                    if not has_valid_ext:
+                        student_name = f"{student_name}.jpg"
+                    
+                    # Ensure directory exists
+                    if not os.path.exists('Training_images'):
+                        os.makedirs('Training_images')
+                    
+                    # Save to disk
+                    save_path = os.path.join('Training_images', student_name)
+                    cv2.imwrite(save_path, img_cv)
+                    
+                    # Also save to session state
+                    st.session_state.in_memory_training_images[student_name] = img_cv
+                    
+                    # Clear cache for face encoding function
+                    load_and_encode_faces.clear()
+                    
+                    st.success(f"Image for {student_name} saved successfully!")
+            except Exception as e:
+                st.error(f"Error processing image: {e}")
+        
+        st.markdown("### OR")
+        
+        # Bulk upload with ZIP
+        st.subheader("Upload Multiple Student Images")
+        uploaded_zip = st.file_uploader("Upload a ZIP file containing student images", type=["zip"], key="zip_uploader")
         if uploaded_zip:
             try:
                 with st.spinner("Processing ZIP file..."):
@@ -847,6 +902,9 @@ def main():
                             st.warning("No valid images found in ZIP file or could not process images")
             except Exception as e:
                 st.error(f"Error processing ZIP file: {e}")
+                
+        st.subheader("Current Student Database")
+        
         try:
             # Try to get images from both disk and memory
             images_to_display = []
@@ -933,56 +991,6 @@ def main():
                 st.success(f"Loaded {disk_images_count} images from disk storage")
             if memory_images_count > 0:
                 st.success(f"Loaded {memory_images_count} images from memory storage")
-            
-            # Display the images
-            if images_to_display:
-                cols = 4
-                rows = (len(images_to_display) + cols - 1) // cols
-                
-                for i in range(rows):
-                    row_cols = st.columns(cols)
-                    for j in range(cols):
-                        idx = i * cols + j
-                        if idx < len(images_to_display):
-                            row_cols[j].image(images_to_display[idx], caption=image_names[idx], width=150)
-            else:
-                st.info("No student images available. Please upload images.")
-                
-        except Exception as e:
-            st.error(f"Error displaying student database: {e}")
-            st.info("No student images could be displayed. Please try uploading images again.")
-        st.subheader("Current Student Database")
-        
-        try:
-            # Try to get images from disk first
-            images_to_display = []
-            image_names = []
-            
-            # Check if disk storage is available and has images
-            if os.path.exists('Training_images') and os.path.isdir('Training_images'):
-                student_images_list = [f for f in os.listdir('Training_images') 
-                                      if os.path.isfile(os.path.join('Training_images', f)) 
-                                      and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                
-                for img_file in student_images_list:
-                    try:
-                        img_path = os.path.join('Training_images', img_file)
-                        img = Image.open(img_path)
-                        images_to_display.append(img)
-                        image_names.append(os.path.splitext(img_file)[0])
-                    except Exception as e:
-                        st.warning(f"Could not open {img_file} from disk: {e}")
-            
-            # If no images found on disk, check memory storage
-            if not images_to_display and 'in_memory_training_images' in st.session_state:
-                for filename, img_data in st.session_state.in_memory_training_images.items():
-                    try:
-                        img_rgb = cv2.cvtColor(img_data, cv2.COLOR_BGR2RGB)
-                        pil_img = Image.fromarray(img_rgb)
-                        images_to_display.append(pil_img)
-                        image_names.append(os.path.splitext(filename)[0])
-                    except Exception as e:
-                        st.warning(f"Could not convert {filename} from memory: {e}")
             
             # Display the images
             if images_to_display:
@@ -1089,38 +1097,37 @@ def main():
                 attendance_messages_placeholder.markdown('<div class="status-info">No attendance marked yet.</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="status-warning">Please select a method to take attendance.</div>', unsafe_allow_html=True)
-        # Display attendance messages
-        if st.session_state.attendance_messages:
-            for message in st.session_state.attendance_messages:
-                attendance_messages_placeholder.markdown(message, unsafe_allow_html=True)
-        else:
-            attendance_messages_placeholder.markdown('<div class="status-info">No new attendance marked.</div>', unsafe_allow_html=True)
+        
     # Display attendance data
     st.markdown('<div class="section-header"><h3 style="color: var(--text-color, #2c3e50);">Attendance Data</h3></div>', unsafe_allow_html=True)
-    if 'attendance_messages' in st.session_state and st.session_state.attendance_messages:
-        for message in st.session_state.attendance_messages:
-            attendance_messages_placeholder.markdown(message, unsafe_allow_html=True)
+    
+    # Only display attendance data if faculty and lecture names are set
+    if st.session_state['faculty_name'] and st.session_state['lecture_name']:
+        faculty_name = st.session_state['faculty_name']
+        lecture_name = st.session_state['lecture_name']
+        
+        # Display attendance data in a table
+        filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
+        if os.path.exists(filename):
+            try:
+                df = pd.read_csv(filename)
+                if not df.empty:
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.markdown('<div class="status-warning">No attendance data available.</div>', unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error reading attendance file: {e}")
+        else:
+            st.markdown('<div class="status-warning">No attendance file found.</div>', unsafe_allow_html=True)
+        
+        # Display download link for attendance CSV
+        download_link = get_csv_download_link(faculty_name, lecture_name)
+        if download_link:
+            st.markdown(download_link, unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="status-warning">No attendance file available for download.</div>', unsafe_allow_html=True)
     else:
-        attendance_messages_placeholder.markdown('<div class="status-info">No new attendance marked.</div>', unsafe_allow_html=True)
-    # Display attendance data in a table
-    filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
-    if os.path.exists(filename):
-        try:
-            df = pd.read_csv(filename)
-            if not df.empty:
-                st.dataframe(df, use_container_width=True)
-            else:
-                st.markdown('<div class="status-warning">No attendance data available.</div>', unsafe_allow_html=True)
-        except Exception as e:
-            st.error(f"Error reading attendance file: {e}")
-    else:
-        st.markdown('<div class="status-warning">No attendance file found.</div>', unsafe_allow_html=True)
-    # Display download link for attendance CSV
-    download_link = get_csv_download_link(faculty_name, lecture_name)
-    if download_link:
-        st.markdown(download_link, unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="status-warning">No attendance file available for download.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="status-warning">Please enter Faculty Name and Lecture Name in the Setup tab first.</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
