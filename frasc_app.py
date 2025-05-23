@@ -924,11 +924,29 @@
 
 # if __name__ == "__main__":
 #     main()
-
 import streamlit as st
+import os
+import gc
+import time
+
+# Set page configuration first
+st.set_page_config(
+    page_title="FRASC: Face Recognition Attendance System for Classes",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Create directory for training images if it doesn't exist
+def create_directories():
+    if not os.path.exists('Training_images'):
+        os.makedirs('Training_images')
+    if not os.path.exists('temp'):
+        os.makedirs('temp')
+    return True
+
+# Import regular dependencies first
 import cv2
 import numpy as np
-import os
 from datetime import datetime
 import csv
 import pandas as pd
@@ -938,51 +956,29 @@ import io
 import base64
 import tempfile
 import zipfile
-import time
 
-# Set page configuration
-st.set_page_config(
-    page_title="FRASC: Face Recognition Attendance System for Classes",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Display a loading message while dependencies load
-loading_placeholder = st.empty()
-loading_placeholder.markdown("Loading face recognition dependencies... Please wait...")
-
-# Import face_recognition with robust error handling and timeout protection
+# Import face_recognition with better error handling
+# Don't use signal module since it fails in Streamlit Cloud environment
 try:
-    # Set a timeout for the import
-    import signal
+    # Show loading message
+    loading_message = st.empty()
+    loading_message.info("Loading face recognition system... Please wait.")
     
-    def timeout_handler(signum, frame):
-        raise TimeoutError("Import face_recognition timed out")
+    # Clean memory before importing
+    gc.collect()
     
-    # Set 30 second timeout for import (adjust as needed)
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(30)
-    
-    # Try to import with memory optimization
-    import gc
-    gc.collect()  # Run garbage collection before import
-    
-    # Try the import
+    # Try importing without timeouts (which cause issues in Streamlit Cloud)
     import face_recognition
     FACE_RECOGNITION_AVAILABLE = True
-    
-    # Clear the alarm
-    signal.alarm(0)
-    
-except (ImportError, TimeoutError) as e:
+    loading_message.success("Face recognition loaded successfully!")
+    time.sleep(1)  # Give users time to see success
+    loading_message.empty()
+except ImportError as e:
     st.error(f"Face recognition library not available: {e}")
     FACE_RECOGNITION_AVAILABLE = False
 except Exception as e:
-    st.error(f"Unexpected error importing face_recognition: {e}")
+    st.error(f"Unexpected error importing face_recognition: {str(e)}")
     FACE_RECOGNITION_AVAILABLE = False
-
-# Clear the loading message
-loading_placeholder.empty()
 
 # For webcam on Streamlit Cloud - import with error handling
 try:
@@ -992,6 +988,8 @@ try:
 except ImportError:
     WEBRTC_AVAILABLE = False
     st.warning("WebRTC not available - webcam functionality disabled")
+
+# Rest of your code remains the same...
 
 # Custom CSS for a professional UI with dark mode compatibility
 st.markdown("""
