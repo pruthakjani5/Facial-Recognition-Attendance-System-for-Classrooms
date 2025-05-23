@@ -925,7 +925,6 @@
 # if __name__ == "__main__":
 #     main()
 
-
 import streamlit as st
 import cv2
 import numpy as np
@@ -940,19 +939,50 @@ import base64
 import tempfile
 import zipfile
 import time
+
 # Set page configuration
 st.set_page_config(
     page_title="FRASC: Face Recognition Attendance System for Classes",
     layout="wide",
     initial_sidebar_state="expanded"
 )
-# Import face_recognition with error handling
+
+# Display a loading message while dependencies load
+loading_placeholder = st.empty()
+loading_placeholder.markdown("Loading face recognition dependencies... Please wait...")
+
+# Import face_recognition with robust error handling and timeout protection
 try:
+    # Set a timeout for the import
+    import signal
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutError("Import face_recognition timed out")
+    
+    # Set 30 second timeout for import (adjust as needed)
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(30)
+    
+    # Try to import with memory optimization
+    import gc
+    gc.collect()  # Run garbage collection before import
+    
+    # Try the import
     import face_recognition
     FACE_RECOGNITION_AVAILABLE = True
-except ImportError as e:
+    
+    # Clear the alarm
+    signal.alarm(0)
+    
+except (ImportError, TimeoutError) as e:
     st.error(f"Face recognition library not available: {e}")
     FACE_RECOGNITION_AVAILABLE = False
+except Exception as e:
+    st.error(f"Unexpected error importing face_recognition: {e}")
+    FACE_RECOGNITION_AVAILABLE = False
+
+# Clear the loading message
+loading_placeholder.empty()
 
 # For webcam on Streamlit Cloud - import with error handling
 try:
