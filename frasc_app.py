@@ -26,13 +26,12 @@ import csv
 import pandas as pd
 from PIL import Image
 import shutil
-import io
+from io import BytesIO
 import base64
 import tempfile
 import zipfile
 
 # Import face_recognition with better error handling
-# Don't use signal module since it fails in Streamlit Cloud environment
 try:
     # Show loading message
     loading_message = st.empty()
@@ -56,14 +55,32 @@ except Exception as e:
 
 # For webcam on Streamlit Cloud - import with error handling
 try:
+    # Install required packages if not available
+    import subprocess
+    import sys
+    
+    def install_package(package):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    
+    try:
+        import streamlit_webrtc
+    except ImportError:
+        st.info("Installing streamlit-webrtc package...")
+        install_package("streamlit-webrtc")
+        
+    try:
+        import av
+    except ImportError:
+        st.info("Installing av package...")
+        install_package("av")
+    
+    # Now import after installation
     from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
     import av
     WEBRTC_AVAILABLE = True
-except ImportError:
+except Exception as e:
     WEBRTC_AVAILABLE = False
-    st.warning("WebRTC not available - webcam functionality disabled")
-
-# Rest of your code remains the same...
+    st.warning(f"WebRTC not available - webcam functionality disabled: {e}")
 
 # Custom CSS for a professional UI with dark mode compatibility
 st.markdown("""
@@ -352,27 +369,7 @@ def create_directories():
 #                     encode_list.append(encode)
 #                 else:
 #                     st.warning(f"No face detected in image for {class_names[i]}")
-#                     # Remove this name since we couldn't encode the face
-#                     class_names[i] = None
-#             except Exception as e:
-#                 st.error(f"Error encoding image for {class_names[i]}: {e}")
-#                 class_names[i] = None
-        
-#         # Remove any None values from class_names where encoding failed
-#         encode_list_final = []
-#         class_names_final = []
-#         for i, name in enumerate(class_names):
-#             if name is not None:
-#                 encode_list_final.append(encode_list[i])
-#                 class_names_final.append(name)
-        
-#         return encode_list_final, class_names_final
-        
-#     except Exception as e:
-#         st.error(f"Error in load_and_encode_faces: {e}")
-#         return [], []
-
-@st.cache_data
+@st.cache_data(ttl=60)  # Cache for 1 minute, allowing frequent refreshes
 def load_and_encode_faces():
     if not FACE_RECOGNITION_AVAILABLE:
         return [], []
@@ -388,6 +385,8 @@ def load_and_encode_faces():
             student_images = [f for f in files if os.path.isfile(os.path.join('Training_images', f)) 
                               and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             
+            st.sidebar.info(f"Found {len(student_images)} images in Training_images directory")
+            
             for img_file in student_images:
                 try:
                     img_path = os.path.join('Training_images', img_file)
@@ -395,17 +394,22 @@ def load_and_encode_faces():
                     if cur_img is not None:
                         images.append(cur_img)
                         class_names.append(os.path.splitext(img_file)[0])
+                    else:
+                        st.warning(f"Image loaded as None: {img_file}")
                 except Exception as e:
                     st.warning(f"Could not load image {img_file} from disk: {e}")
             
             if images:
                 disk_loading_succeeded = True
+                st.sidebar.success(f"Successfully loaded {len(images)} images from disk")
     except Exception as e:
         st.warning(f"Error loading images from disk: {e}")
     
     # If disk loading failed or no images were found, try to load from memory
     if not disk_loading_succeeded and 'in_memory_training_images' in st.session_state:
-        st.info("Using in-memory storage for training images")
+        memory_image_count = len(st.session_state.in_memory_training_images)
+        st.info(f"Using in-memory storage for {memory_image_count} training images")
+        
         for filename, img in st.session_state.in_memory_training_images.items():
             if img is not None:
                 images.append(img)
@@ -413,9 +417,36 @@ def load_and_encode_faces():
     
     # If we still have no images, return empty lists
     if not images:
+        st.warning("No images found in both disk and memory storage")
         return [], []
     
     # Encode faces
+    encode_list = []
+    valid_indices = []
+    
+    with st.spinner(f"Encoding {len(images)} faces..."):
+        for i, img in enumerate(images):
+            try:
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                face_encodings = face_recognition.face_encodings(img_rgb)
+                if face_encodings:
+                    encode = face_encodings[0]
+                    encode_list.append(encode)
+                    valid_indices.append(i)
+                else:
+                    st.warning(f"No face detected in image for {class_names[i]}")
+            except Exception as e:
+                st.error(f"Error encoding image for {class_names[i]}: {e}")
+    
+    # Only keep class names for successfully encoded faces
+    class_names_final = [class_names[i] for i in valid_indices]
+    
+    if encode_list:
+        st.sidebar.success(f"Successfully encoded {len(encode_list)} faces")
+    else:
+        st.error("No faces could be encoded. Please check your images.")
+    
+    return encode_list, class_names_final
     encode_list = []
     valid_indices = []
     
@@ -601,20 +632,22 @@ if WEBRTC_AVAILABLE and FACE_RECOGNITION_AVAILABLE:
                     bottom *= 4
                     left *= 4
                     
+                    # Draw rectangle around the face
+                    cv2.rectangle(img, (left, top), (right, bottom), (0, 255, 0), 2)
+                    
+                    # Compare with known faces
                     matches = face_recognition.compare_faces(self.known_encodings, face_encoding)
                     name = "Unknown"
                     
-                    if True in matches:
+                    if len(matches) > 0:
                         face_distances = face_recognition.face_distance(self.known_encodings, face_encoding)
                         best_match_index = np.argmin(face_distances)
                         if matches[best_match_index]:
                             name = self.class_names[best_match_index]
                     
-                    color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
-                    
-                    cv2.rectangle(img, (left, top), (right, bottom), color, 2)
-                    cv2.rectangle(img, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
-                    cv2.putText(img, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 1)
+                    # Display name
+                    cv2.rectangle(img, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
+                    cv2.putText(img, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
                     
                     if name != "Unknown" and name not in self.marked_names_session:
                         if mark_attendance(name, self.faculty_name, self.lecture_name):
@@ -638,11 +671,34 @@ def get_csv_download_link(faculty_name, lecture_name):
     filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
     if os.path.exists(filename):
         try:
-            with open(filename, 'r') as f:
-                csv_data = f.read()
+            # Read file with proper error handling
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    csv_data = f.read()
+            except UnicodeDecodeError:
+                # Try with a different encoding if utf-8 fails
+                with open(filename, 'r', encoding='latin-1') as f:
+                    csv_data = f.read()
             
+            # Create base64 encoded data
             b64 = base64.b64encode(csv_data.encode()).decode()
-            href = f'<a href="data:file/csv;base64,{b64}" download="{filename}" class="download-button">Download Attendance CSV</a>'
+            
+            # Create HTML link with better styling
+            href = f'''
+            <a href="data:file/csv;base64,{b64}" 
+               download="{filename}" 
+               class="download-button"
+               style="text-decoration:none;">
+                <span style="display:flex;align-items:center;justify-content:center;gap:8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Download Attendance CSV
+                </span>
+            </a>
+            '''
             return href
         except Exception as e:
             st.error(f"Error creating download link: {e}")
@@ -732,120 +788,169 @@ def main():
         
         st.markdown('<div class="section-header"><h3 style="color: var(--text-color, #2c3e50);">Student Database Management</h3></div>', unsafe_allow_html=True)
         
-        # Option 1: Upload individual images
-        st.subheader("Upload Student Images")
-        uploaded_files = st.file_uploader("Upload individual student images", 
-                                          type=["jpg", "jpeg", "png"], 
-                                          accept_multiple_files=True,
-                                          key="individual_uploader")
-        
-        # if uploaded_files:
-        #     success_count = 0
-        #     for uploaded_file in uploaded_files:
-        #         try:
-        #             file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        #             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                    
-        #             if img is not None:
-        #                 filename = uploaded_file.name
-        #                 cv2.imwrite(os.path.join('Training_images', filename), img)
-        #                 success_count += 1
-        #             else:
-        #                 st.warning(f"Could not decode image: {uploaded_file.name}")
-        #         except Exception as e:
-        #             st.error(f"Error processing {uploaded_file.name}: {e}")
-            
-        #     if success_count > 0:
-        #         st.markdown(f'<div class="status-success">Uploaded {success_count} images successfully!</div>', unsafe_allow_html=True)
-        #         # Clear cache for the function that loads and encodes faces
-        #         load_and_encode_faces.clear()
-        # Add this near the top of your file
-    if 'in_memory_training_images' not in st.session_state:
-        st.session_state.in_memory_training_images = {}  # {filename: image_data}
-    
-    # Then modify your upload handler to also store in memory:
-        if uploaded_files:
-            success_count = 0
-            for uploaded_file in uploaded_files:
-                try:
-                    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-                    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                    
-                    if img is not None:
-                        filename = uploaded_file.name
-                        
-                        # Try to save to disk
-                        try:
-                            cv2.imwrite(os.path.join('Training_images', filename), img)
-                        except Exception as e:
-                            st.warning(f"Could not save to disk, using memory storage: {e}")
-                        
-                        # Also save to memory as backup
-                        st.session_state.in_memory_training_images[filename] = img
-                        success_count += 1
-                    else:
-                        st.warning(f"Could not decode image: {uploaded_file.name}")
-                except Exception as e:
-                    st.error(f"Error processing {uploaded_file.name}: {e}")
-                
-            # Option 2: Upload ZIP file containing images
         uploaded_zip = st.file_uploader("Or upload a ZIP file containing student images", type=["zip"], key="zip_uploader")
         if uploaded_zip:
             try:
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    zip_path = os.path.join(tmp_dir, uploaded_zip.name)
-                    with open(zip_path, 'wb') as f:
-                        f.write(uploaded_zip.read())
-                    
-                    count = 0
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        for file in zip_ref.namelist():
-                            if file.lower().endswith(('.jpg', '.jpeg', '.png')) and not file.startswith('__MACOSX'):
+                with st.spinner("Processing ZIP file..."):
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        # Reset file pointer
+                        uploaded_zip.seek(0)
+                        
+                        # Save zip to temp directory
+                        zip_path = os.path.join(tmp_dir, uploaded_zip.name)
+                        with open(zip_path, 'wb') as f:
+                            f.write(uploaded_zip.read())
+                        
+                        count = 0
+                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                            # Get list of all image files in zip
+                            image_files = [
+                                file for file in zip_ref.namelist() 
+                                if file.lower().endswith(('.jpg', '.jpeg', '.png')) 
+                                and not file.startswith('__MACOSX')
+                                and not os.path.isdir(file)
+                            ]
+                            
+                            st.info(f"Found {len(image_files)} images in ZIP file")
+                            
+                            # Extract each image
+                            for file in image_files:
                                 try:
                                     zip_ref.extract(file, tmp_dir)
                                     img_path = os.path.join(tmp_dir, file)
                                     if os.path.isfile(img_path):
-                                        filename = os.path.basename(file)
-                                        shutil.copy(img_path, os.path.join('Training_images', filename))
-                                        count += 1
+                                        # Read the image
+                                        img = cv2.imread(img_path)
+                                        if img is not None:
+                                            # Get base filename
+                                            filename = os.path.basename(file)
+                                            
+                                            # Ensure Training_images directory exists
+                                            if not os.path.exists('Training_images'):
+                                                os.makedirs('Training_images')
+                                                
+                                            # Save to disk
+                                            save_path = os.path.join('Training_images', filename)
+                                            cv2.imwrite(save_path, img)
+                                            
+                                            # Also save to session state
+                                            st.session_state.in_memory_training_images[filename] = img
+                                            count += 1
                                 except Exception as e:
                                     st.warning(f"Could not extract {file}: {e}")
-                    
-                    if count > 0:
-                        st.markdown(f'<div class="status-success">Extracted {count} images from ZIP file successfully!</div>', unsafe_allow_html=True)
-                        # Clear cache for the function that loads and encodes faces
-                        load_and_encode_faces.clear()
-                    else:
-                        st.warning("No valid images found in ZIP file")
+                        
+                        if count > 0:
+                            st.markdown(f'<div class="status-success">Extracted {count} images from ZIP file successfully!</div>', unsafe_allow_html=True)
+                            # Clear cache for the function that loads and encodes faces
+                            load_and_encode_faces.clear()
+                        else:
+                            st.warning("No valid images found in ZIP file or could not process images")
             except Exception as e:
                 st.error(f"Error processing ZIP file: {e}")
-
-        # # Show all currently loaded student images
-        # st.subheader("Current Student Database")
-        # if os.path.exists('Training_images'):
-        #     student_images_list = [f for f in os.listdir('Training_images') if os.path.isfile(os.path.join('Training_images', f)) and f.lower().endswith(('.jpg', '.jpeg', '.png'))] if (os.path.exists('Training_images') and os.path.isdir('Training_images')) else []
+        try:
+            # Try to get images from both disk and memory
+            images_to_display = []
+            image_names = []
             
-        #     if student_images_list:
-        #         cols = 4
-        #         rows = (len(student_images_list) + cols - 1) // cols
+            disk_images_count = 0
+            memory_images_count = 0
+            
+            # Set up a progress bar for the loading process
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Check if disk storage is available and has images
+            status_text.text("Checking disk storage...")
+            if os.path.exists('Training_images') and os.path.isdir('Training_images'):
+                student_images_list = [f for f in os.listdir('Training_images') 
+                                    if os.path.isfile(os.path.join('Training_images', f)) 
+                                    and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
                 
-        #         for i in range(rows):
-        #             row_cols = st.columns(cols)
-        #             for j in range(cols):
-        #                 idx = i * cols + j
-        #                 if idx < len(student_images_list):
-        #                     try:
-        #                         img_path = os.path.join('Training_images', student_images_list[idx])
-        #                         img = Image.open(img_path)
-        #                         name = os.path.splitext(student_images_list[idx])[0]
-        #                         row_cols[j].image(img, caption=name, width=150)
-        #                     except Exception as e:
-        #                         row_cols[j].error(f"Could not display {student_images_list[idx]}")
-        #     else:
-        #         st.info("No student images uploaded yet.")
-        # else:
-        #     st.info("No 'Training_images' directory found. Please upload images.")
-        # Show all currently loaded student images
+                if student_images_list:
+                    status_text.text(f"Loading {len(student_images_list)} images from disk...")
+                
+                for i, img_file in enumerate(student_images_list):
+                    try:
+                        img_path = os.path.join('Training_images', img_file)
+                        
+                        # Try with PIL first
+                        try:
+                            img = Image.open(img_path)
+                            images_to_display.append(img)
+                            image_names.append(os.path.splitext(img_file)[0])
+                            disk_images_count += 1
+                        except Exception:
+                            # If PIL fails, try with OpenCV
+                            try:
+                                cv_img = cv2.imread(img_path)
+                                if cv_img is not None:
+                                    cv_img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+                                    img = Image.fromarray(cv_img_rgb)
+                                    images_to_display.append(img)
+                                    image_names.append(os.path.splitext(img_file)[0])
+                                    disk_images_count += 1
+                            except Exception:
+                                st.warning(f"Could not open {img_file} with either PIL or OpenCV")
+                    except Exception as e:
+                        st.warning(f"Could not process {img_file} from disk: {e}")
+                    
+                    # Update progress
+                    if student_images_list:
+                        progress_bar.progress((i + 1) / len(student_images_list) * 0.5)  # First half of progress bar
+            
+            # Also check memory storage regardless of whether disk loading succeeded
+            if 'in_memory_training_images' in st.session_state:
+                memory_files = list(st.session_state.in_memory_training_images.keys())
+                
+                if memory_files:
+                    status_text.text(f"Loading {len(memory_files)} images from memory...")
+                
+                for i, (filename, img_data) in enumerate(st.session_state.in_memory_training_images.items()):
+                    try:
+                        if img_data is not None:
+                            img_rgb = cv2.cvtColor(img_data, cv2.COLOR_BGR2RGB)
+                            pil_img = Image.fromarray(img_rgb)
+                            
+                            # Only add if not already loaded from disk (check by name)
+                            img_name = os.path.splitext(filename)[0]
+                            if img_name not in image_names:
+                                images_to_display.append(pil_img)
+                                image_names.append(img_name)
+                                memory_images_count += 1
+                    except Exception as e:
+                        st.warning(f"Could not convert {filename} from memory: {e}")
+                    
+                    # Update progress for second half
+                    if memory_files:
+                        progress_bar.progress(0.5 + (i + 1) / len(memory_files) * 0.5)
+            
+            # Clear progress elements
+            progress_bar.empty()
+            status_text.empty()
+            
+            # Display info about loaded images
+            if disk_images_count > 0:
+                st.success(f"Loaded {disk_images_count} images from disk storage")
+            if memory_images_count > 0:
+                st.success(f"Loaded {memory_images_count} images from memory storage")
+            
+            # Display the images
+            if images_to_display:
+                cols = 4
+                rows = (len(images_to_display) + cols - 1) // cols
+                
+                for i in range(rows):
+                    row_cols = st.columns(cols)
+                    for j in range(cols):
+                        idx = i * cols + j
+                        if idx < len(images_to_display):
+                            row_cols[j].image(images_to_display[idx], caption=image_names[idx], width=150)
+            else:
+                st.info("No student images available. Please upload images.")
+                
+        except Exception as e:
+            st.error(f"Error displaying student database: {e}")
+            st.info("No student images could be displayed. Please try uploading images again.")
         st.subheader("Current Student Database")
         
         try:
