@@ -1550,7 +1550,7 @@ def main():
         # Show all currently loaded student images
         st.subheader("Current Student Database")
         if os.path.exists('Training_images'):
-            student_images_list = [f for f in os.listdir('Training_images') if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            student_images_list = [f for f in os.listdir('Training_images') if os.path.isfile(os.path.join('Training_images', f)) and f.lower().endswith(('.jpg', '.jpeg', '.png'))] if (os.path.exists('Training_images') and os.path.isdir('Training_images')) else []
             
             if student_images_list:
                 cols = 4
