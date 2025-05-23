@@ -393,11 +393,10 @@ def mark_attendance(name, faculty_name, lecture_name):
     
     now = datetime.now()
     # Using IST time (UTC+5:30) for Streamlit Cloud deployment
-    indian_timezone = now.astimezone(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+    from datetime import timezone, timedelta
+    indian_timezone = now.astimezone(timezone(timedelta(hours=5, minutes=30)))
     today = indian_timezone.strftime("%d-%m-%Y")
     current_time = indian_timezone.strftime("%H:%M:%S")
-
-    current_time = now.strftime("%H:%M:%S")
     
     # Use a lock mechanism to prevent duplicate entries from concurrent calls
     lock_file = f"{filename}.lock"
