@@ -1,6 +1,5 @@
 dlib-bin
-git+https://github.com/ageitgey/face_recognition_models
-face_recognition @ git+https://github.com/thetoby9944/face_recognition
+face_recognition
 opencv-python
 Pillow
 pandas
