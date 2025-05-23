@@ -287,7 +287,91 @@ def create_directories():
         st.error(f"Error in create_directories: {e}")
         return False
 
-# Caching for performance: Load and encode known faces once
+# # Caching for performance: Load and encode known faces once
+# @st.cache_data
+# def load_and_encode_faces():
+#     if not FACE_RECOGNITION_AVAILABLE:
+#         return [], []
+    
+#     images = []
+#     class_names = []
+    
+#     # More robust directory checking
+#     try:
+#         # First verify the directory exists and is actually a directory
+#         if not os.path.exists('Training_images'):
+#             try:
+#                 os.makedirs('Training_images')
+#                 return [], []  # Return empty lists since we just created the directory
+#             except Exception as e:
+#                 st.error(f"Could not create Training_images directory: {e}")
+#                 return [], []
+        
+#         if not os.path.isdir('Training_images'):
+#             st.error("Training_images exists but is not a directory")
+#             return [], []
+            
+#         # Check if the directory is empty
+#         files = os.listdir('Training_images')
+#         if not files:
+#             return [], []
+            
+#         # Filter for image files
+#         student_images = [f for f in files if os.path.isfile(os.path.join('Training_images', f)) 
+#                           and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        
+#         if not student_images:
+#             return [], []
+            
+#         # Process each image
+#         for img_file in student_images:
+#             try:
+#                 img_path = os.path.join('Training_images', img_file)
+#                 if not os.path.exists(img_path):
+#                     continue
+                    
+#                 cur_img = cv2.imread(img_path)
+#                 if cur_img is not None:
+#                     images.append(cur_img)
+#                     class_names.append(os.path.splitext(img_file)[0])
+#             except Exception as e:
+#                 st.warning(f"Could not load image {img_file}: {e}")
+        
+#         # No images were loaded successfully
+#         if not images:
+#             return [], []
+        
+#         # Encode faces
+#         encode_list = []
+#         for i, img in enumerate(images):
+#             try:
+#                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#                 face_encodings = face_recognition.face_encodings(img_rgb)
+#                 if face_encodings:
+#                     encode = face_encodings[0]
+#                     encode_list.append(encode)
+#                 else:
+#                     st.warning(f"No face detected in image for {class_names[i]}")
+#                     # Remove this name since we couldn't encode the face
+#                     class_names[i] = None
+#             except Exception as e:
+#                 st.error(f"Error encoding image for {class_names[i]}: {e}")
+#                 class_names[i] = None
+        
+#         # Remove any None values from class_names where encoding failed
+#         encode_list_final = []
+#         class_names_final = []
+#         for i, name in enumerate(class_names):
+#             if name is not None:
+#                 encode_list_final.append(encode_list[i])
+#                 class_names_final.append(name)
+        
+#         return encode_list_final, class_names_final
+        
+#     except Exception as e:
+#         st.error(f"Error in load_and_encode_faces: {e}")
+#         return [], []
+
 @st.cache_data
 def load_and_encode_faces():
     if not FACE_RECOGNITION_AVAILABLE:
@@ -296,81 +380,62 @@ def load_and_encode_faces():
     images = []
     class_names = []
     
-    # More robust directory checking
+    # Try to load from disk first
+    disk_loading_succeeded = False
     try:
-        # First verify the directory exists and is actually a directory
-        if not os.path.exists('Training_images'):
-            try:
-                os.makedirs('Training_images')
-                return [], []  # Return empty lists since we just created the directory
-            except Exception as e:
-                st.error(f"Could not create Training_images directory: {e}")
-                return [], []
-        
-        if not os.path.isdir('Training_images'):
-            st.error("Training_images exists but is not a directory")
-            return [], []
+        if os.path.exists('Training_images') and os.path.isdir('Training_images'):
+            files = os.listdir('Training_images')
+            student_images = [f for f in files if os.path.isfile(os.path.join('Training_images', f)) 
+                              and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             
-        # Check if the directory is empty
-        files = os.listdir('Training_images')
-        if not files:
-            return [], []
+            for img_file in student_images:
+                try:
+                    img_path = os.path.join('Training_images', img_file)
+                    cur_img = cv2.imread(img_path)
+                    if cur_img is not None:
+                        images.append(cur_img)
+                        class_names.append(os.path.splitext(img_file)[0])
+                except Exception as e:
+                    st.warning(f"Could not load image {img_file} from disk: {e}")
             
-        # Filter for image files
-        student_images = [f for f in files if os.path.isfile(os.path.join('Training_images', f)) 
-                          and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        
-        if not student_images:
-            return [], []
-            
-        # Process each image
-        for img_file in student_images:
-            try:
-                img_path = os.path.join('Training_images', img_file)
-                if not os.path.exists(img_path):
-                    continue
-                    
-                cur_img = cv2.imread(img_path)
-                if cur_img is not None:
-                    images.append(cur_img)
-                    class_names.append(os.path.splitext(img_file)[0])
-            except Exception as e:
-                st.warning(f"Could not load image {img_file}: {e}")
-        
-        # No images were loaded successfully
-        if not images:
-            return [], []
-        
-        # Encode faces
-        encode_list = []
-        for i, img in enumerate(images):
-            try:
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                face_encodings = face_recognition.face_encodings(img_rgb)
-                if face_encodings:
-                    encode = face_encodings[0]
-                    encode_list.append(encode)
-                else:
-                    st.warning(f"No face detected in image for {class_names[i]}")
-                    # Remove this name since we couldn't encode the face
-                    class_names[i] = None
-            except Exception as e:
-                st.error(f"Error encoding image for {class_names[i]}: {e}")
-                class_names[i] = None
-        
-        # Remove any None values from class_names where encoding failed
-        encode_list_final = []
-        class_names_final = []
-        for i, name in enumerate(class_names):
-            if name is not None:
-                encode_list_final.append(encode_list[i])
-                class_names_final.append(name)
-        
-        return encode_list_final, class_names_final
-        
+            if images:
+                disk_loading_succeeded = True
     except Exception as e:
-        st.error(f"Error in load_and_encode_faces: {e}")
+        st.warning(f"Error loading images from disk: {e}")
+    
+    # If disk loading failed or no images were found, try to load from memory
+    if not disk_loading_succeeded and 'in_memory_training_images' in st.session_state:
+        st.info("Using in-memory storage for training images")
+        for filename, img in st.session_state.in_memory_training_images.items():
+            if img is not None:
+                images.append(img)
+                class_names.append(os.path.splitext(filename)[0])
+    
+    # If we still have no images, return empty lists
+    if not images:
         return [], []
+    
+    # Encode faces
+    encode_list = []
+    valid_indices = []
+    
+    for i, img in enumerate(images):
+        try:
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            face_encodings = face_recognition.face_encodings(img_rgb)
+            if face_encodings:
+                encode = face_encodings[0]
+                encode_list.append(encode)
+                valid_indices.append(i)
+            else:
+                st.warning(f"No face detected in image for {class_names[i]}")
+        except Exception as e:
+            st.error(f"Error encoding image for {class_names[i]}: {e}")
+    
+    # Only keep class names for successfully encoded faces
+    class_names_final = [class_names[i] for i in valid_indices]
+    
+    return encode_list, class_names_final
 
 def mark_attendance(name, faculty_name, lecture_name):
     filename = f"Attendance_{faculty_name}_{lecture_name}.csv"
