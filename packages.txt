@@ -1,7 +1,9 @@
 cmake
-libgl1
-libxkbcommon-x11-0
+build-essential
+libgl1-mesa-glx
 libgtk-3-0
 libsm6
 libxext6
 libxrender1
+libglib2.0-0
+libxkbcommon-x11-0
